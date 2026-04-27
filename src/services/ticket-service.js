@@ -758,6 +758,12 @@ export default class TicketService {
             const jiraField = this.getMetadataField(fields, field);
             if (jiraField) {
                 const value = this.getFieldValueForImport(valueObj.value, jiraField);
+
+                if (value === null || value === undefined) {
+                    pending.push(field);
+                    return;
+                }
+
                 const [parentField, childField] = field.split(".");
 
                 if (childField) {
@@ -791,7 +797,7 @@ export default class TicketService {
 
         switch (type) {
             case "user": returnValue = { name: value }; break;
-            case "date": returnValue = this.$utils.formatDate(value, "yyyy-MM-dd"); break;
+            case "date": returnValue = this.getDateFieldValueForImport(value); break;
             case "datetime": returnValue = this.$utils.formatDateTimeForJira(value); break; // Must be in "2019-04-16T00:00:00.000Z" format
             case "array":
                 returnValue = value.map(v => {
@@ -857,6 +863,16 @@ export default class TicketService {
 
         return returnValue;
     };
+
+    getDateFieldValueForImport(value) {
+        const date = value instanceof Date ? value : this.$utils.convertDate(value);
+
+        if (!(date instanceof Date)) {
+            return null;
+        }
+
+        return this.$utils.formatDate(date, "yyyy-MM-dd");
+    }
 
     /*
     verifyAllowedAutocompleteValues(autoCompleteUrl, valueObj) {

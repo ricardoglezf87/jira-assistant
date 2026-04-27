@@ -50,6 +50,10 @@ export default class UtilsService {
             datetime = this.convertDate(datetime);
         }
 
+        if (!(datetime instanceof Date)) {
+            return null;
+        }
+
         return `${datetime.toISOString().replace('Z', '').replace('z', '')}+0000`;
     }
 
