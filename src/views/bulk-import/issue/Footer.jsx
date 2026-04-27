@@ -3,9 +3,9 @@ import { Button } from '../../../controls';
 
 class Footer extends PureComponent {
     render() {
-        const { isLoading, selectedCount, clearImportData, importIssues } = this.props;
+        const { isLoading, selectedCount, clearImportData, importIssues, itemLabel = "Issues" } = this.props;
 
-        const importLabel = `Import ${selectedCount || ''} Issues`;
+        const importLabel = `Import ${selectedCount || ''} ${itemLabel}`;
 
         return <div className="pnl-footer">
             <div className="float-end">

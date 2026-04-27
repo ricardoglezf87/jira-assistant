@@ -1,6 +1,7 @@
 export const ApiUrls = {
     getAllProjects: "~/rest/api/2/project",
-    search: "~/rest/api/3/search/jql",
+    search: "~/rest/api/2/search",
+    searchLegacy: "~/rest/api/2/search",
     createIssue: "~/rest/api/2/issue/",
     cloneIssue: "~/rest/internal/2/issue/{0}/clone",
     taskStatus: "~/rest/api/3/task/{0}",

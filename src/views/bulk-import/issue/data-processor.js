@@ -23,7 +23,7 @@ export function processData(data, colMapping, defaultColumns, invalidHeaderTempl
             return;
         }
 
-        const col = colMapping[f];
+        const col = getColumnMapping(colMapping, f);
 
         if (col) {
             const { schema: { type, system } = {} } = col;
@@ -31,11 +31,11 @@ export function processData(data, colMapping, defaultColumns, invalidHeaderTempl
 
             addedFields[f] = true;
             columns.push({
-                field: col.key, displayText: col.name, fieldType,
+                field: f, displayText: getColumnDisplayText(col, f), fieldType,
                 custom: col.custom,
                 headerEditable: false,
                 ...settings,
-                ...colSpecialProps[col.key]
+                ...colSpecialProps[f]
             });
         }
         else {
@@ -54,6 +54,22 @@ export function processData(data, colMapping, defaultColumns, invalidHeaderTempl
     const importData = repeatIssuesWithMultiValues(data).map(convertDataForDisplay.bind(addedFields));
 
     return { columns, importData, addedFields };
+}
+
+function getColumnMapping(colMapping, field) {
+    return colMapping[field] || colMapping[field.split(".")[0]];
+}
+
+function getColumnDisplayText(col, field) {
+    if (field === 'timetracking.originalEstimate') {
+        return 'Original Estimate';
+    }
+
+    if (field === 'timetracking.remainingEstimate') {
+        return 'Remaining Estimate';
+    }
+
+    return col.name;
 }
 
 export function repeatIssuesWithMultiValues(issues) {
