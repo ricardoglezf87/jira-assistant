@@ -7,6 +7,7 @@ const CalendarViewComponent = config.modules.calendar && React.lazy(() => import
 
 // Bulk Import
 const ImportWorklogComponent = config.modules.importWorklog && React.lazy(() => import('./views/bulk-import/worklog/ImportWorklog'));
+const ImportTaskComponent = config.modules.importTasks && React.lazy(() => import('./views/bulk-import/task/ImportTask'));
 const BulkImportIssueComponent = config.modules.importIssues && React.lazy(() => import('./views/bulk-import/issue/BulkImportIssue'));
 
 // Reports
@@ -76,6 +77,10 @@ const sessionBasedRoute = [
     ImportWorklogComponent && {
         path: '/import/worklog',
         component: ImportWorklogComponent
+    },
+    ImportTaskComponent && {
+        path: '/import/task',
+        component: ImportTaskComponent
     },
     BulkImportIssueComponent && {
         path: '/import/issue',

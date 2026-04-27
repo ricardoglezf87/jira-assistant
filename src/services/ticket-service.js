@@ -104,7 +104,9 @@ export default class TicketService {
     }
 
     async validateIssuesForImport({ columns, importData: issues, addedFields }, settings) {
-        await this.pullProjectMetadata(issues.distinct(i => i.project?.value, true));
+        if (!settings?.editOnly) {
+            await this.pullProjectMetadata(issues.distinct(i => i.project?.value, true));
+        }
 
         const importData = await issues.mapAsync(issue => this.validateIssueForImport(issue, columns, addedFields, true, settings));
         await this.fillIssueDetails(importData, columns);
@@ -113,7 +115,7 @@ export default class TicketService {
             const isInsert = !issuekey.value;
             const metadata = isInsert ? importStatus.createMetadata : importStatus.updateMetadata;
             if (metadata) {
-                importStatus.hasError = !(await this.validateFieldsUsingMetadata(issue, columns, metadata.fields, addedFields, isInsert)) || importStatus.hasError;
+                importStatus.hasError = !(await this.validateFieldsUsingMetadata(issue, columns, metadata.fields, addedFields, isInsert, settings)) || importStatus.hasError;
             }
             issue.disabled = importStatus.hasError;
             if (issue.disabled) {
@@ -125,8 +127,8 @@ export default class TicketService {
 
     async fillIssueDetails(issues, columns) {
         const issueKeys = issues.distinct(i => i.issuekey?.value, true);
-        const filteredCols = columns.filter(c => !c.hasError && ignoredFields.indexOf(c.field) === -1);
-        const colNames = filteredCols.map(c => c.field);
+        const filteredCols = columns.filter(c => c?.field && !c.hasError && ignoredFields.indexOf(c.field) === -1);
+        const colNames = filteredCols.map(c => c.field.split(".")[0]).distinct();
 
         const jiraIssues = await this.getTicketDetails(issueKeys, false, colNames, { ignoreErrors: true, ignoreWarnings: true });
         issues.forEach(issue => {
@@ -145,11 +147,23 @@ export default class TicketService {
             const fields = jiraIssue.fields;
             filteredCols.forEach(col => {
                 const { field } = col;
-                const curValue = fields[field];
+                const curValue = this.getIssueFieldValue(fields, field);
                 if (!issue[field]) { issue[field] = {}; }
                 this.setJiraValue(issue, col, curValue);
             });
         });
+    }
+
+    getIssueFieldValue(fields, fieldName) {
+        if (!fieldName) { return null; }
+
+        const [parentField, childField] = fieldName.split(".");
+
+        if (childField) {
+            return fields[parentField]?.[childField];
+        }
+
+        return fields[fieldName];
     }
 
     setJiraValue(issue, col, jiraValue) {
@@ -252,6 +266,9 @@ export default class TicketService {
             }
 
             await this.validateIssueForUpdate(issue, columns, addedFields, isBulk, settings);
+        } else if (settings?.editOnly) {
+            issue.issuekey.error = msgValueRequired;
+            importStatus.hasError = true;
         } else {
             actions.create = true;
             await this.validateIssueForCreate(issue, columns, addedFields, isBulk, settings);
@@ -278,7 +295,7 @@ export default class TicketService {
         const { fields } = issueMetadata;
         let { fieldsArr } = issueMetadata;
         if (!fieldsArr) {
-            fieldsArr = Object.keys(fields).map(f => fields[f]);
+            fieldsArr = Object.keys(fields).map(f => ({ ...fields[f], key: fields[f].key || f }));
             issueMetadata.fieldsArr = fieldsArr;
         }
         this.addMissingColumns(columns, addedFields, fieldsArr, settings);
@@ -322,7 +339,7 @@ export default class TicketService {
 
                 //importStatus.fieldInfo = typeObj.fields;
                 if (!typeObj.fieldsArr) {
-                    typeObj.fieldsArr = Object.keys(typeObj.fields).map(f => typeObj.fields[f]);
+                    typeObj.fieldsArr = Object.keys(typeObj.fields).map(f => ({ ...typeObj.fields[f], key: typeObj.fields[f].key || f }));
                 }
                 this.addMissingColumns(columns, addedFields, typeObj.fieldsArr, settings);
                 importStatus.createMetadata = typeObj;
@@ -339,10 +356,12 @@ export default class TicketService {
 
     addMissingColumns(columns, addedFields, fields, settings) {
         fields.forEach(col => {
-            if (col.required && !addedFields[col.key]) {
-                addedFields[col.key] = true;
+            const key = col.key;
+
+            if (col.required && key && !addedFields[key]) {
+                addedFields[key] = true;
                 columns.push({
-                    field: col.key, displayText: col.name,
+                    field: key, displayText: col.name,
                     fieldType: this.getFieldType(col),
                     custom: !!col.schema?.customId,
                     headerEditable: false,
@@ -357,14 +376,30 @@ export default class TicketService {
         return type === 'array' ? system : type;
     }
 
-    async validateFieldsUsingMetadata(issue, columns, fields, addedFields, insert) {
+    async validateFieldsUsingMetadata(issue, columns, fields, addedFields, insert, settings) {
         let isValid = true;
         const hasIssueKey = !!issue.issuekey.value;
         await columns.mapAsync(async col => {
-            if (~ignoredFields.indexOf(col.field)) { return; }
+            if (!col?.field || ~ignoredFields.indexOf(col.field)) { return; }
 
-            const field = fields[col.field];
+            const field = this.getMetadataField(fields, col.field);
             const valueObj = issue[col.field] || {};
+
+            if (hasIssueKey && settings?.ignoreFieldsOnUpdate?.includes(col.field)) {
+                delete valueObj.value;
+                delete valueObj.displayText;
+                delete valueObj.avatarUrl;
+                delete valueObj.error;
+                delete valueObj.warning;
+                return;
+            }
+
+            if (hasIssueKey && !valueObj.value && settings?.optionalFieldsOnUpdate?.includes(col.field)) {
+                delete valueObj.error;
+                delete valueObj.warning;
+                return;
+            }
+
             if (!field) {
                 if (valueObj.value) {
                     if (insert) {
@@ -621,7 +656,7 @@ export default class TicketService {
         let hasFieldsForUpdate = !!issuekey.value;
 
         if (!issuekey.value) { // create issue
-            const { fields, pending } = this.getFieldsForImport(issue, columns, importStatus.createMetadata.fields);
+            const { fields, pending, importedColumns } = this.getFieldsForImport(issue, columns, importStatus.createMetadata.fields);
 
             try {
                 const response = await this.$jira.createIssue(fields);
@@ -638,7 +673,7 @@ export default class TicketService {
                 console.log("Issue created", response);
 
                 // Clear the fields which are already imported
-                Object.keys(fields).forEach(f => {
+                importedColumns.forEach(f => {
                     const { displayText, value, avatarUrl } = issue[f];
                     issue[f].jiraValue = { displayText, value, avatarUrl };
                     delete issue[f].value;
@@ -669,11 +704,11 @@ export default class TicketService {
         }
 
         if (issuekey.value && hasFieldsForUpdate && importStatus.updateMetadata) {
-            const { fields, pending } = this.getFieldsForImport(issue, columns, importStatus.updateMetadata.fields);
+            const { fields, pending, importedColumns } = this.getFieldsForImport(issue, columns, importStatus.updateMetadata.fields);
 
             try {
                 if (Object.keys(fields).length) {
-                    const response = await this.$jira.updateIssue(fields);
+                    const response = await this.$jira.updateIssue(issuekey.value, { fields });
                     console.log("Issue updated", response);
 
                     importStatus.imported = true;
@@ -683,7 +718,7 @@ export default class TicketService {
                     delete importStatus.warning;
 
                     // Clear the fields which are already imported
-                    Object.keys(fields).forEach(f => {
+                    importedColumns.forEach(f => {
                         const { displayText, value, avatarUrl } = issue[f];
                         issue[f].jiraValue = { displayText, value, avatarUrl };
                         delete issue[f].value;
@@ -709,23 +744,45 @@ export default class TicketService {
     getFieldsForImport(issue, columns, fields) {
         const result = {};
         const pending = [];
+        const importedColumns = [];
         columns.forEach((col) => {
             const { field } = col;
+            if (!field) { return; }
+
             const valueObj = issue[field];
 
             if (!valueObj?.value) {
                 return;
             }
 
-            const jiraField = fields[field];
+            const jiraField = this.getMetadataField(fields, field);
             if (jiraField) {
                 const value = this.getFieldValueForImport(valueObj.value, jiraField);
-                result[field] = value;
+                const [parentField, childField] = field.split(".");
+
+                if (childField) {
+                    result[parentField] = result[parentField] || {};
+                    result[parentField][childField] = value;
+                }
+                else {
+                    result[field] = value;
+                }
+
+                importedColumns.push(field);
             } else {
                 pending.push(field);
             }
         });
-        return { fields: result, pending };
+        return { fields: result, pending, importedColumns };
+    }
+
+    getMetadataField(fields, fieldName) {
+        if (!fields || !fieldName) { return null; }
+
+        if (fields[fieldName]) { return fields[fieldName]; }
+
+        const parentField = fieldName.split(".")[0];
+        return fields[parentField];
     }
 
     getFieldValueForImport = (value, field) => {
@@ -734,7 +791,8 @@ export default class TicketService {
 
         switch (type) {
             case "user": returnValue = { name: value }; break;
-            case "date": returnValue = this.$utils.formatDateTimeForJira(value); break; // Must be in "2019-04-16T00:00:00.000Z" format
+            case "date": returnValue = this.$utils.formatDate(value, "yyyy-MM-dd"); break;
+            case "datetime": returnValue = this.$utils.formatDateTimeForJira(value); break; // Must be in "2019-04-16T00:00:00.000Z" format
             case "array":
                 returnValue = value.map(v => {
                     v = v.value;
@@ -1333,7 +1391,7 @@ export default class TicketService {
 
         switch (type) {
             case "user": returnValue = { name: value }; break;
-            case "date": returnValue = this.$utils.formatDateTimeForJira(value); break; // Must be in "2019-04-16T00:00:00.000Z" format
+            case "date": returnValue = this.$utils.formatDate(value, "yyyy-MM-dd"); break;
             case "array":
                 returnValue = value.split(",").map(v => { // ToDo: additional check needed based on allowedValues
                     const val = {};
@@ -1403,7 +1461,7 @@ export default class TicketService {
 
 function compareIgnoreCase(str1, str2) {
     str1 = (str1 || "").toLowerCase();
-    str2 = (str1 || "").toLowerCase();
+    str2 = (str2 || "").toLowerCase();
 
     return str1 === str2;
 }

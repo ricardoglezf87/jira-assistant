@@ -17,12 +17,14 @@ export default class JiraService {
         this.$message = $message;
         this.$session = $session;
         this.runningRequests = {};
+        this.useLegacySearchApi = true;
     }
 
     // eslint-disable-next-line complexity
     async searchTickets(jql, fields, nextPageToken, opts) {
         fields = fields || defaultJiraFields;
         const { worklogStartDate, worklogEndDate } = opts || {};
+        const useLegacySearch = this.useLegacySearchApi === true;
     
         try {
             const postData = { jql, fields, maxResults: opts?.maxResults || 1000 };
@@ -30,13 +32,17 @@ export default class JiraService {
                 postData.expand = opts.expand;
             }
 
-            if (nextPageToken) {
+            if (useLegacySearch) {
+                postData.startAt = nextPageToken || 0;
+            }
+            else if (nextPageToken) {
                 postData.nextPageToken = nextPageToken;
             }
 
-            const result = await this.$ajax.get(prepareUrlWithQueryString(ApiUrls.search, postData));
+            const searchUrl = useLegacySearch ? ApiUrls.searchLegacy : ApiUrls.search;
+            const result = await this.$ajax.get(prepareUrlWithQueryString(searchUrl, postData));
         
-            const issues = result.issues;
+            const issues = result.issues || [];
         
             if (opts?.ignoreWarnings !== true) {
                 if (result.warningMessages?.length) {
@@ -51,15 +57,20 @@ export default class JiraService {
                 
             }
 
-            // Handle pagination using v3 API tokens
-            if (!opts?.maxResults && !result.isLast && issues.length > 0) {
-                const nextResults = await this.searchTickets(jql, fields, result.nextPageToken, opts);
+            if (!opts?.maxResults && this.hasMoreSearchResults(result, useLegacySearch, issues)) {
+                const nextPage = useLegacySearch ? result.startAt + result.maxResults : result.nextPageToken;
+                const nextResults = await this.searchTickets(jql, fields, nextPage, opts);
                 issues.addRange(nextResults);
             }
 
             return issues;
         
         } catch (err) {
+            if (!useLegacySearch && err.status === 404) {
+                this.useLegacySearchApi = true;
+                return this.searchTickets(jql, fields, 0, opts);
+            }
+
             if (opts?.ignoreErrors !== true) {
                 const messages = err.error?.errorMessages;
                 if (messages?.length > 0) {
@@ -68,6 +79,16 @@ export default class JiraService {
             }
             throw err;
         }
+    }
+
+    hasMoreSearchResults(result, useLegacySearch, issues) {
+        if (!issues.length) { return false; }
+
+        if (useLegacySearch) {
+            return result.total > result.startAt + result.maxResults;
+        }
+
+        return !result.isLast && !!result.nextPageToken;
     }
 
     async validateForWorklogs(issues, worklogStartDate, worklogEndDate) {

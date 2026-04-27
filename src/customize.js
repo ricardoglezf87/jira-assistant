@@ -7,6 +7,7 @@ const config = {
         // Activities
         calendar: true,
         importWorklog: true,
+        importTasks: true,
         importIssues: true,
         planningPoker: !isPluginBuild,
 

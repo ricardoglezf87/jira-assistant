@@ -54,6 +54,11 @@ tbody {
 
         &.data-modified {
             background-color: lightyellow !important;
+            color: #0a0a0a !important;
+
+            span {
+                color: #0a0a0a;
+            }
         }
 
         .ja-date-editor button {

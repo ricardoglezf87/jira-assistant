@@ -21,7 +21,7 @@ export function getDashboardMenu(d, idx, userId) {
 }
 
 const { dashboards,
-    calendar, importWorklog, importIssues, planningPoker,
+    calendar, importWorklog, importTasks, importIssues, planningPoker,
 
     // Reports
     worklogReport, sprintReport, customReport, estimateVsActual, pivotReport, sayDoRatioReport,
@@ -30,7 +30,7 @@ const { dashboards,
     userGroups, generalSettings, advancedSettings,
 
     // Menu groups
-    activitiesGroup = calendar || importWorklog || importIssues || planningPoker,
+    activitiesGroup = calendar || importWorklog || importTasks || importIssues || planningPoker,
     reportsGroup = worklogReport || sayDoRatioReport || sprintReport || customReport || estimateVsActual,
     settingsGroup = userGroups || generalSettings || advancedSettings
 } = config.modules;
@@ -65,6 +65,12 @@ const navigation = [
                 id: 'IMW',
                 url: '/import/worklog',
                 icon: 'fa fa-clock'
+            },
+            importTasks && {
+                name: 'Import task',
+                id: 'IMT',
+                url: '/import/task',
+                icon: 'fa fa-tasks'
             },
             importIssues && {
                 name: 'Import issue',

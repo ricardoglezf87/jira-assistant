@@ -15,6 +15,15 @@ import './ImportIssue.scss';
 import DateEditor from '../../../editor-controls/DateEditor';
 import classNames from 'classnames';
 import Link from '../../../controls/Link';
+
+const defaultImportConfig = {
+    importType: "Issue",
+    icon: "fa fa-ticket",
+    className: "import-issue",
+    itemLabel: "Issues",
+    noRowMessage
+};
+
 /**
  Scenarios to handle
 
@@ -48,8 +57,11 @@ const editorControls = {
 
 class ImportIssue extends BaseImport {
     constructor(props) {
-        super(props, "Issue", "fa fa-ticket");
-        this.className = 'import-issue';
+        const importConfig = { ...defaultImportConfig, ...new.target.importConfig, ...props?.importConfig };
+
+        super(props, importConfig.importType, importConfig.icon);
+        this.importConfig = importConfig;
+        this.className = importConfig.className;
         inject(this, "JiraService", "TicketService", "MessageService", "UserUtilsService");
         this.defaultColSettings = {
             cellTemplate: this.renderIssueCells,
@@ -67,24 +79,62 @@ class ImportIssue extends BaseImport {
             delete: { cellTemplate: this.renderDeleteBody }
         }, this.defaultColSettings);
         this.state = { columns: this.defaultColumns, importData: [] };
-        this.$jira.getCustomFields().then(f => {
+        this.transformHeader = transformHeader([], this.importConfig.fieldAliases);
+        this.customFieldsPromise = this.$jira.getCustomFields().then(f => {
             this.customFields = f;
             this.colMapping = f.reduce((map, f) => {
                 map[f.id] = f;
                 return map;
             }, {});
-            this.transformHeader = transformHeader(f);
+            this.transformHeader = transformHeader(f, this.importConfig.fieldAliases);
         });
     }
 
     async processData(data) {
         this.setState({ isLoading: true });
+        await this.customFieldsPromise;
+        data = this.normalizeDataHeaders(data);
         const processedData = processData(data, this.colMapping, this.defaultColumns, this.invalidHeaderTemplate, this.unsupportedFieldTemplate, this.defaultColSettings);
-        const newState = await this.$ticket.validateIssuesForImport(processedData, this.defaultColSettings);
+        const newState = await this.$ticket.validateIssuesForImport(processedData, {
+            ...this.defaultColSettings,
+            editOnly: this.importConfig.editOnly,
+            optionalFieldsOnUpdate: this.importConfig.optionalFieldsOnUpdate,
+            ignoreFieldsOnUpdate: this.importConfig.ignoreFieldsOnUpdate
+        });
+        this.applyImportConfigRules(newState.importData);
         newState.selectedCount = this.getSelectedCount(newState.importData);
         newState.selectAll = newState.selectedCount > 0;
         newState.isLoading = false;
         this.setState(newState);
+    }
+
+    normalizeDataHeaders(data) {
+        return data.map(row => Object.keys(row).reduce((obj, key) => {
+            const field = key.includes(".") ? key : this.transformHeader(key);
+
+            if (field) {
+                obj[field] = row[key];
+            }
+
+            return obj;
+        }, {}));
+    }
+
+    applyImportConfigRules(importData) {
+        if (!this.importConfig.editOnly) { return; }
+
+        importData.forEach(issue => {
+            if (issue.issuekey?.value) { return; }
+
+            issue.issuekey = { ...issue.issuekey, error: "Ticket No is required" };
+            issue.importStatus = {
+                ...issue.importStatus,
+                hasError: true,
+                error: "Ticket No is required"
+            };
+            issue.disabled = true;
+            issue.selected = false;
+        });
     }
 
     //#region Handle selection
@@ -245,7 +295,12 @@ class ImportIssue extends BaseImport {
             row[column.field] = { ...cell, ...valObj };
 
             const { columns, addedFields } = this.state;
-            importData[rowIndex] = await this.$ticket.validateIssueForImport(row, columns, addedFields, false, this.defaultColSettings);
+            importData[rowIndex] = await this.$ticket.validateIssueForImport(row, columns, addedFields, false, {
+                ...this.defaultColSettings,
+                editOnly: this.importConfig.editOnly,
+                optionalFieldsOnUpdate: this.importConfig.optionalFieldsOnUpdate,
+                ignoreFieldsOnUpdate: this.importConfig.ignoreFieldsOnUpdate
+            });
             this.setState({ importData });
         }
         endEdit();
@@ -258,13 +313,14 @@ class ImportIssue extends BaseImport {
 
     //#region Footer functionalities
     clearImportData = () => {
-        this.setState({ columns: null, importData: null, selectedCount: null });
+        this.setState({ columns: this.defaultColumns, importData: [], selectedCount: null, selectAll: false });
     };
 
     renderFooter() {
         const { isLoading, selectedCount } = this.state;
 
         return (<Footer isLoading={isLoading} selectedCount={selectedCount}
+            itemLabel={this.importConfig.itemLabel}
             clearImportData={this.clearImportData} importIssues={this.importIssues} />);
     }
 
@@ -310,8 +366,8 @@ class ImportIssue extends BaseImport {
 
         return super.renderBase(
             <EditableGrid
-                columns={columns} rows={importData}
-                noRowMessage={noRowMessage}
+                columns={columns || this.defaultColumns} rows={importData || []}
+                noRowMessage={this.importConfig.noRowMessage}
                 getRowHeaderClassName={this.getRowHeaderClassName}
                 height="calc(100vh - 152px)"
             />
